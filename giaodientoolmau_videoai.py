@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import QMessageBox
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 import os
 import time
+import threading
 import requests
 
 # Import các file phụ trợ
@@ -23,6 +24,7 @@ class MultiThread(QThread):
         self.api_url_gpm = api_url_gpm  # URL GPM lấy từ giao diện
         self.proxy = proxy               # Proxy cho luồng này (rỗng = dùng proxy local)
         self.is_running = True
+        self._stop_event = threading.Event()  # Event để dừng sleep ngay lập tức
 
     def run(self):
         gpm = Gpm()
@@ -32,6 +34,9 @@ class MultiThread(QThread):
         response_data = "-"
         try:
             # 1. Tạo Profile GPM mới
+            if not self.is_running:
+                status = "Đã dừng"
+                return
             self.record.emit(self.index, "Đang tạo profile GPM", "-")
             if self.proxy:
                 # Có proxy → dùng create_profile với proxy (format IP:PORT:USER:PASS hoặc IP:PORT)
@@ -43,6 +48,9 @@ class MultiThread(QThread):
                 print(f"[Cảnh {self.index}] 🏠 Dùng proxy local")
             
             # 2. Mở Profile GPM
+            if not self.is_running:
+                status = "Đã dừng"
+                return
             self.record.emit(self.index, "Đang mở GPM", "-")
             remote_addr = gpm.open_profile(apiurl_Gpm=self.api_url_gpm, id_profile=profile_id)
             
@@ -51,6 +59,9 @@ class MultiThread(QThread):
                 raise RuntimeError("open_profile trả về None — GPM chưa khởi động hoặc API URL GPM sai.")
             
             # 3. Kéo Playwright vào điều khiển trình duyệt
+            if not self.is_running:
+                status = "Đã dừng"
+                return
             self.record.emit(self.index, "Đang chạy Playwright", "-")
             with sync_playwright() as p:
                 browser = p.chromium.connect_over_cdp(f"http://{remote_addr}")
@@ -60,14 +71,27 @@ class MultiThread(QThread):
                 
                 # Mở google và nhập "test cảnh"
                 page.goto("https://www.google.com")
+                
+                # Kiểm tra dừng sau khi goto
+                if not self.is_running:
+                    browser.close()
+                    status = "Đã dừng"
+                    return
+                
                 # Chọn thẻ input search của Google
                 search_input = page.locator('textarea[name="q"], input[name="q"]').first
                 search_input.wait_for(state="visible", timeout=15000)
                 search_input.fill("test cảnh")
                 page.keyboard.press("Enter")
-                
+                self._stop_event.wait(1000)  # Có thể ngắt ngay khi stop() được gọi
                 # Đợi một lát để trang load kết quả
                 page.wait_for_timeout(3000) 
+                
+                # Kiểm tra dừng trước khi gọi API
+                if not self.is_running:
+                    browser.close()
+                    status = "Đã dừng"
+                    return
                 
                 # 4. Call API N8N
                 self.record.emit(self.index, "Đang gọi API N8N", "-")
@@ -145,13 +169,16 @@ class MultiThread(QThread):
         return False
 
     def stop(self):
+        """Ra hiệu dừng: đặt cả boolean lẫn Event để ngắt sleep ngay lập tức."""
         self.is_running = False
+        self._stop_event.set()  # Ngắt bất kỳ _stop_event.wait() nào đang bị block
 
 class Manager(QtWidgets.QMainWindow, Ui_Widget):
     def __init__(self):
         super().__init__()
         self.setupUi(self)
 
+        self.config = {}  # Dictionary để lưu config values không phải widget
         self.config_path = os.path.join(os.path.dirname(__file__), "config.env")
         self._config_map = {
             "AI_MODEL": self.cb_ai_model,
@@ -175,7 +202,6 @@ class Manager(QtWidgets.QMainWindow, Ui_Widget):
             "SEED_LINK": self.seed_le_link,
             "SEED_DESC": self.seed_le_desc,
             "KOL_LANG": self.kol_cb_lang,
-            "KOL_LINK": self.kol_le_link,
             "KOL_DESC": self.kol_le_desc,
             "KOL_PROMPT": self.kol_le_prompt,
         }
@@ -186,6 +212,8 @@ class Manager(QtWidgets.QMainWindow, Ui_Widget):
         self.threads = []
         self.completed_threads = 0
         self.total_threads = 0
+        self.running_threads = 0    # Số luồng đang chạy thực tế
+        self._is_stopping = False   # Flag để bỏ qua signal của thread khi đã bấm dừng
 
         # Kết nối nút proxy: mở rộng / thu gọn bảng nhập proxy
         self.btn_proxy_collapsed.clicked.connect(self._toggle_proxy_panel)
@@ -193,12 +221,46 @@ class Manager(QtWidgets.QMainWindow, Ui_Widget):
 
         # Kết nối sự kiện Click cho nút "BẮT ĐẦU TẠO VIDEO" bên tab Veo3
         self.veo3_btn_analyze.clicked.connect(self.startThreadVeo3)
+        
+        # Kết nối nút cập nhật phiên bản cho cả hai tab
+        self.veo3_btn_update.clicked.connect(self._update_version)
+        self.kol_btn_update.clicked.connect(self._update_version)
+
+    def _set_veo3_btn_running(self, is_running):
+        """Đổi trạng thái nút BẮT ĐẦU TẠO VIDEO theo trạng thái luồng."""
+        if is_running:
+            self.veo3_btn_analyze.setText("⏹  ĐANG CHẠY TẠO VIDEO...BẤM ĐỂ DỪNG CHẠY")
+            self.veo3_btn_analyze.setStyleSheet(
+                "background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+                " stop:0 #b91c1c, stop:1 #f97316);"
+                " border: none; color: white; font-weight: bold;"
+            )
+        else:
+            self.veo3_btn_analyze.setText("🚀  BẮT ĐẦU TẠO VIDEO")
+            # Xoá style inline → fallback về QSS gốc (#analyzeBtn)
+            self.veo3_btn_analyze.setStyleSheet("")
+
+    def _stop_all_veo3_threads(self):
+        """Dừng tất cả luồng đang chạy và reset UI ngay lập tức."""
+        self._is_stopping = True  # Báo hiệu cho update_data bỏ qua signal từ giờ này
+        for t in self.threads:
+            t.stop()
+        print("[Manager] ⛔ Đã gửi lệnh dừng tất cả luồng.")
+        # Reset UI ngay lập tức — không chờ thread kết thúc
+        self.running_threads = 0
+        self.completed_threads = self.total_threads  # Đánh dấu đã xong để tránh lệch counter
+        self.veo3_btn_running.setText("⏱ Đang xử lý 0 luồng")
+        self._set_veo3_btn_running(False)
+        QtWidgets.QApplication.processEvents()  # Buộc UI render ngay
 
     def startThreadVeo3(self):
-        # Kiểm tra xem có luồng nào đang chạy dở không
+        # Nếu đang có luồng chạy → bấm nút = dừng tất cả
         if any(t.isRunning() for t in self.threads):
-            QMessageBox.warning(self, "Đang chạy", "Vui lòng chờ các tiến trình cũ hoàn thành.")
+            self._stop_all_veo3_threads()
             return
+
+        # Reset flag dừng trước mỗi lần chạy mới
+        self._is_stopping = False
 
         # Lấy số lượng "cảnh" (số luồng) từ combobox giao diện góc trái
         try:
@@ -241,9 +303,14 @@ class Manager(QtWidgets.QMainWindow, Ui_Widget):
 
         self.total_threads = input_soluong
         self.completed_threads = 0
+        self.running_threads = input_soluong  # Khởi đầu: tất cả luồng đều chạy
         
-        # Cập nhật số tiến trình trên nút Đang xử lý
-        self.veo3_btn_running.setText(f"⏱ Đang xử lý... 0/{self.total_threads}")
+        # Cập nhật nút Đang xử lý: hiển thị số luồng đang chạy
+        self.veo3_btn_running.setText(f"⏱ Đang xử lý {self.running_threads} luồng")
+
+        # Đổi nút sang trạng thái đang chạy NGAY lập tức trước khi khởi động luồng
+        self._set_veo3_btn_running(True)
+        QtWidgets.QApplication.processEvents()  # Buộc UI render ngay
 
         self.threads = []
 
@@ -267,18 +334,29 @@ class Manager(QtWidgets.QMainWindow, Ui_Widget):
             time.sleep(1.5)
 
     def update_data(self, index, status, response_data):
+        # Nếu đang trong trạng thái dừng thủ công → bỏ qua tín hiệu từ thread
+        if self._is_stopping:
+            print(f"[Cảnh {index}] Bỏ qua signal (tool đã dừng): {status}")
+            return
+
         # In log ra màn hình console để theo dõi
         print(f"[Cảnh {index}] Trạng thái: {status} | Phản hồi N8N: {response_data}")
         
-        # Nếu luồng hoàn tất hoặc bị lỗi, tăng bộ đếm lên 1
-        if status == "Hoàn thành" or status.startswith("Lỗi"):
+        # Nếu luồng hoàn tất, bị lỗi, hoặc bị dừng thì giảm bộ đếm luồng đang chạy
+        if status == "Hoàn thành" or status.startswith("Lỗi") or status == "Đã dừng":
             self.completed_threads += 1
-            # Cập nhật hiển thị (vd: "⏱ Đang xử lý... 3/10")
-            self.veo3_btn_running.setText(f"⏱ Đang xử lý... {self.completed_threads}/{self.total_threads}")
+            self.running_threads = max(0, self.running_threads - 1)  # Giảm luồng đang chạy
+            # Cập nhật nút hiển thị số luồng đang chạy
+            self.veo3_btn_running.setText(f"⏱ Đang xử lý {self.running_threads} luồng")
             
-            # Nếu tất cả các luồng đã xong
+            # Nếu tất cả các luồng đã xong (hoàn thành / lỗi / dừng)
             if self.completed_threads == self.total_threads:
-                QMessageBox.information(self, "Thành công", f"Đã chạy xong toàn bộ {self.total_threads} cảnh!")
+                self.running_threads = 0
+                self.veo3_btn_running.setText("⏱ Đang xử lý 0 luồng")
+                # Trả text nút về trạng thái ban đầu
+                self._set_veo3_btn_running(False)
+                if status != "Đã dừng":  # Chỉ thông báo "Thành công" nếu không phải dừng thủ công
+                    QMessageBox.information(self, "Thành công", f"Đã chạy xong toàn bộ {self.total_threads} cảnh!")
 
     def _connect_config_signals(self):
         for widget in self._config_map.values():
@@ -304,6 +382,12 @@ class Manager(QtWidgets.QMainWindow, Ui_Widget):
                 widget.setPlainText(value)
             else:
                 widget.setText(value)
+
+        # Load version từ config
+        if "VERSION" in values:
+            self.config["VERSION"] = self._decode_env_value(values["VERSION"])
+        else:
+            self.config["VERSION"] = "1.0"
 
         if "CURRENT_TAB" in values:
             try:
@@ -345,6 +429,9 @@ class Manager(QtWidgets.QMainWindow, Ui_Widget):
                 env_data[key] = widget.toPlainText()
             else:
                 env_data[key] = widget.text()
+        
+        # Lưu VERSION từ config dictionary
+        env_data["VERSION"] = self.config.get("VERSION", "1.0")
         env_data["CURRENT_TAB"] = str(self.tabWidget.currentIndex())
 
         with open(self.config_path, "w", encoding="utf-8") as f:
@@ -370,6 +457,42 @@ class Manager(QtWidgets.QMainWindow, Ui_Widget):
             # Mở panel
             self.proxy_expand_panel.setVisible(True)
 
+    def _update_version(self):
+        """Cho phép người dùng cập nhật phiên bản tool."""
+        from PyQt5 import QtWidgets
+        
+        # Danh sách phiên bản có sẵn
+        available_versions = ["1.0", "1.1", "1.2", "1.3"]
+        
+        # Lấy phiên bản hiện tại từ config
+        current_version = self.config.get("VERSION", "1.0")
+        
+        # Tìm index của phiên bản hiện tại
+        current_index = available_versions.index(current_version) if current_version in available_versions else 0
+        
+        # Hiển thị dialog chọn phiên bản
+        selected_version, ok = QtWidgets.QInputDialog.getItem(
+            self, 
+            "Cập nhật phiên bản", 
+            "Chọn phiên bản:",
+            available_versions,
+            current_index,
+            editable=False
+        )
+        
+        if ok and selected_version.strip():
+            # Cập nhật config
+            self.config["VERSION"] = selected_version.strip()
+            
+            # Cập nhật UI trên cả hai tab
+            # Tìm tất cả QLabel với objectName "verLabel" và cập nhật text
+            for widget in self.findChildren(QtWidgets.QLabel):
+                if widget.objectName() == "verLabel":
+                    widget.setText(f"Phiên bản {selected_version.strip()}")
+            
+            # Lưu config vào file
+            self._save_config()
+
     def closeEvent(self, event):
         # Stop và dọn dẹp các Thread khi ấn X tắt phần mềm
         for t in self.threads:
@@ -381,5 +504,6 @@ class Manager(QtWidgets.QMainWindow, Ui_Widget):
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
     window = Manager()
-    window.showMaximized()
+    window.resize(2560, 1600)
+    window.show()
     sys.exit(app.exec_())

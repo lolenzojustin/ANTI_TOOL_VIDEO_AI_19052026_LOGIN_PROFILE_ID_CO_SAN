@@ -23,13 +23,15 @@ def _get_scale():
     if app is None:
         return 1.0
     screen = app.primaryScreen()
+    if screen is None:
+        return 1.0
     geom = screen.availableGeometry()
     w, h = geom.width(), geom.height()
     dpi = screen.logicalDotsPerInch()
     dpi_scale = dpi / 96.0
-    res_scale = min(w / 1366.0, h / 768.0)
-    scale = dpi_scale * max(res_scale, 0.95)
-    return max(1.0, min(scale, 1.4))
+    res_scale = min(w / 1600.0, h / 900.0)
+    scale = dpi_scale * max(res_scale, 1.0)
+    return max(1.0, min(scale, 1.8))
 
 
 def _s(v, sc):
@@ -42,7 +44,7 @@ class Ui_Widget(object):
         sc = self._sc
 
         Widget.setObjectName("Widget")
-        Widget.resize(_s(1500, sc), _s(920, sc))
+        Widget.resize(_s(1800, sc), _s(1020, sc))
 
         self.centralwidget = QtWidgets.QWidget(Widget)
         Widget.setCentralWidget(self.centralwidget)
@@ -54,7 +56,7 @@ class Ui_Widget(object):
         # ── LEFT PANEL ──
         self.leftPanel = QtWidgets.QFrame()
         self.leftPanel.setObjectName("leftPanel")
-        self.leftPanel.setFixedWidth(_s(280, sc))
+        self.leftPanel.setFixedWidth(_s(320, sc))
 
         leftScroll = QtWidgets.QScrollArea()
         leftScroll.setWidgetResizable(True)
@@ -95,7 +97,7 @@ class Ui_Widget(object):
         # Nút thu gọn (mặc định hiển thị)
         self.btn_proxy_collapsed = QtWidgets.QPushButton("📋  Nhấp để nhập proxy...")
         self.btn_proxy_collapsed.setObjectName("proxyCollapsedBtn")
-        self.btn_proxy_collapsed.setFixedHeight(_s(28, sc))
+        self.btn_proxy_collapsed.setFixedHeight(_s(34, sc))
         self.btn_proxy_collapsed.setCursor(QtCore.Qt.PointingHandCursor)
         lv.addWidget(self.btn_proxy_collapsed)
 
@@ -110,7 +112,7 @@ class Ui_Widget(object):
             '<b>Mỗi dòng 1 proxy:</b> IP:PORT:USER:PASS hoặc IP:PORT.<br>'
             '<b>Nếu sai/thiếu thì profile sẽ mở theo proxy local của máy.</b>'
         )
-        lbl_proxy_hint.setObjectName("noteLabel")
+        lbl_proxy_hint.setObjectName("proxyHintLabel")
         lbl_proxy_hint.setWordWrap(True)
         panel_lay.addWidget(lbl_proxy_hint)
         self.te_proxy_input = QtWidgets.QTextEdit()
@@ -118,11 +120,11 @@ class Ui_Widget(object):
         self.te_proxy_input.setPlaceholderText(
             "1.2.3.4:8080:user:pass\n5.6.7.8:3128\n..."
         )
-        self.te_proxy_input.setFixedHeight(_s(160, sc))
+        self.te_proxy_input.setFixedHeight(_s(190, sc))
         panel_lay.addWidget(self.te_proxy_input)
         self.btn_proxy_close = QtWidgets.QPushButton("✔  Đóng bảng proxy")
         self.btn_proxy_close.setObjectName("proxyCloseBtn")
-        self.btn_proxy_close.setFixedHeight(_s(28, sc))
+        self.btn_proxy_close.setFixedHeight(_s(34, sc))
         self.btn_proxy_close.setCursor(QtCore.Qt.PointingHandCursor)
         panel_lay.addWidget(self.btn_proxy_close)
         self.proxy_expand_panel.setVisible(False)
@@ -172,7 +174,7 @@ class Ui_Widget(object):
         self.cb_scene_count = QtWidgets.QComboBox()
         self.cb_scene_count.addItems([str(i) for i in range(1, 21)])
         self.cb_scene_count.setCurrentIndex(9)  # mặc định = 10
-        self.cb_scene_count.setFixedHeight(_s(26, sc))
+        self.cb_scene_count.setFixedHeight(_s(30, sc))
         lv.addWidget(self.cb_scene_count)
 
         self.lb_duration_inline = QtWidgets.QLabel("Thời gian: 80 giây")
@@ -192,7 +194,7 @@ class Ui_Widget(object):
         self.te_voice_desc = QtWidgets.QTextEdit()
         self.te_voice_desc.setPlaceholderText("Nhập mô tả giọng nhân vật...")
         self.te_voice_desc.setObjectName("voiceDesc")
-        self.te_voice_desc.setMinimumHeight(_s(100, sc))
+        self.te_voice_desc.setMinimumHeight(_s(140, sc))
         lv.addWidget(self.te_voice_desc)
 
         lv.addStretch()
@@ -212,22 +214,24 @@ class Ui_Widget(object):
         self.tabWidget = QtWidgets.QTabWidget()
         self.tabWidget.setObjectName("tabWidget")
         self.tabWidget.setDocumentMode(True)
+        self.tabWidget.tabBar().setElideMode(QtCore.Qt.ElideNone)
+        self.tabWidget.tabBar().setExpanding(False)
 
+        # Tạo widget ẩn cho Grok/Seedance để _config_map không bị lỗi tham chiếu
         self.tab_grok     = QtWidgets.QWidget()
         self.tab_veo3     = QtWidgets.QWidget()
         self.tab_seedance = QtWidgets.QWidget()
         self.tab_kol      = QtWidgets.QWidget()
 
-        self._build_tab_content(self.tab_grok,     "grok")
+        self._build_tab_content(self.tab_grok,     "grok")   # ẩn — chỉ để giữ widget
         self._build_tab_content(self.tab_veo3,     "veo3")
-        self._build_tab_content(self.tab_seedance, "seed")
+        self._build_tab_content(self.tab_seedance, "seed")   # ẩn — chỉ để giữ widget
         self._build_kol_tab(self.tab_kol)
 
-        self.tabWidget.addTab(self.tab_grok,     "  Chế độ grok tạo video  ")
+        # Chỉ thêm 2 tab cần thiết: Veo3 (index 0) và KOL AI (index 1)
         self.tabWidget.addTab(self.tab_veo3,     "  Chế độ Veo3 tạo video  ")
-        self.tabWidget.addTab(self.tab_seedance, "  Chế độ Seedance 2.0 video  ")
-        self.tabWidget.addTab(self.tab_kol,      "  🌟 KOL AI  ")
-        self.tabWidget.setCurrentIndex(1)
+        self.tabWidget.addTab(self.tab_kol,      "  🌟 Chế độ tạo video KOL AI  ")
+        self.tabWidget.setCurrentIndex(0)
 
         rv.addWidget(self.tabWidget)
 
@@ -248,25 +252,31 @@ class Ui_Widget(object):
         # Top row: language + version + New
         topRow = QtWidgets.QHBoxLayout()
         lang_cb = self._combo(["Tiếng Việt (Vietnamese)", "English", "Japanese"])
-        lang_cb.setMinimumWidth(_s(180, sc))
-        ver_lb = QtWidgets.QLabel("v1.5.9")
+        lang_cb.setMinimumWidth(_s(220, sc))
+        ver_lb = QtWidgets.QLabel("Phiên bản 1.0")
         ver_lb.setObjectName("verLabel")
+        ver_update_btn = QtWidgets.QPushButton("⬆️  Cập nhật")
+        ver_update_btn.setObjectName("updateBtn")
+        ver_update_btn.setFixedHeight(_s(36, sc))
+        ver_update_btn.setFixedWidth(_s(130, sc))
         new_btn = QtWidgets.QPushButton("● New")
         new_btn.setObjectName("newBtn")
-        new_btn.setFixedHeight(_s(36, sc))
+        new_btn.setFixedHeight(_s(40, sc))
         topRow.addWidget(lang_cb)
         topRow.addWidget(ver_lb)
+        topRow.addWidget(ver_update_btn)
         topRow.addStretch()
         topRow.addWidget(new_btn)
         layout.addLayout(topRow)
         setattr(self, f"{prefix}_cb_lang", lang_cb)
+        setattr(self, f"{prefix}_btn_update", ver_update_btn)
         setattr(self, f"{prefix}_btn_new", new_btn)
 
         # Link input
         le_link = QtWidgets.QLineEdit()
         le_link.setPlaceholderText("https://www.youtube.com/shorts/bQic0POmBHA")
         le_link.setObjectName("bigInput")
-        le_link.setFixedHeight(_s(38, sc))
+        le_link.setFixedHeight(_s(42, sc))
         layout.addWidget(le_link)
         setattr(self, f"{prefix}_le_link", le_link)
 
@@ -274,22 +284,22 @@ class Ui_Widget(object):
         le_desc = QtWidgets.QLineEdit()
         le_desc.setPlaceholderText("Mô tả thêm (tùy chọn)...")
         le_desc.setObjectName("bigInput")
-        le_desc.setFixedHeight(_s(38, sc))
+        le_desc.setFixedHeight(_s(42, sc))
         layout.addWidget(le_desc)
         setattr(self, f"{prefix}_le_desc", le_desc)
 
         # Analyze button
         btn_analyze = QtWidgets.QPushButton("🚀  BẮT ĐẦU TẠO VIDEO")
         btn_analyze.setObjectName("analyzeBtn")
-        btn_analyze.setFixedHeight(_s(48, sc))
+        btn_analyze.setFixedHeight(_s(52, sc))
         layout.addWidget(btn_analyze)
         setattr(self, f"{prefix}_btn_analyze", btn_analyze)
 
         # Action buttons row
         actionRow = QtWidgets.QHBoxLayout()
-        actionRow.setSpacing(_s(5, sc))
+        actionRow.setSpacing(_s(8, sc))
         actions = [
-            ("⏱ Đang xử lý...  0/10",     "actionBtnProcess", f"{prefix}_btn_running"),
+            ("⏱ Đang xử lý 0 luồng",          "actionBtnProcess", f"{prefix}_btn_running"),
             ("🎬 Ghép Video",               "actionBtnMerge",   f"{prefix}_btn_merge"),
             ("🔁 Chạy lại cảnh nhất định",  "actionBtnRerun",   f"{prefix}_btn_rerun"),
             ("✏️ Thêm kịch bản",            "actionBtnAdd",     f"{prefix}_btn_add"),
@@ -298,7 +308,7 @@ class Ui_Widget(object):
         for text, obj, attr in actions:
             b = QtWidgets.QPushButton(text)
             b.setObjectName(obj)
-            b.setFixedHeight(_s(36, sc))
+            b.setFixedHeight(_s(40, sc))
             b.setCursor(QtCore.Qt.PointingHandCursor)
             actionRow.addWidget(b)
             setattr(self, attr, b)
@@ -354,8 +364,8 @@ class Ui_Widget(object):
         sc = self._sc
         card = QtWidgets.QFrame()
         card.setObjectName("sceneCardActive" if active else "sceneCard")
-        card.setMinimumHeight(_s(160, sc))
-        card.setMaximumHeight(_s(180, sc))
+        card.setMinimumHeight(_s(180, sc))
+        card.setMaximumHeight(_s(210, sc))
 
         hl = QtWidgets.QHBoxLayout(card)
         hl.setContentsMargins(_s(10,sc), _s(10,sc), _s(10,sc), _s(10,sc))
@@ -364,7 +374,7 @@ class Ui_Widget(object):
         preview = QtWidgets.QLabel(f"SCENE {idx}")
         preview.setObjectName("previewBox")
         preview.setAlignment(QtCore.Qt.AlignCenter)
-        preview.setFixedSize(_s(180, sc), _s(100, sc))
+        preview.setFixedSize(_s(220, sc), _s(120, sc))
 
         vr = QtWidgets.QVBoxLayout()
         vr.setSpacing(_s(4, sc))
@@ -377,7 +387,7 @@ class Ui_Widget(object):
 
         prompt = QtWidgets.QTextEdit()
         prompt.setObjectName("promptBox")
-        prompt.setFixedHeight(_s(54, sc))
+        prompt.setFixedHeight(_s(70, sc))
         prompt.setPlainText(
             "anime style, vibrant colors, clean outlines, soft cel shading, "
             "detailed eyes, studio-quality anime frame, high-clarity character design..."
@@ -406,47 +416,45 @@ class Ui_Widget(object):
         topRow = QtWidgets.QHBoxLayout()
         kol_lang_cb = self._combo(["Tiếng Việt (Vietnamese)", "English", "Japanese"])
         kol_lang_cb.setMinimumWidth(_s(220, sc))
-        kol_ver_lb = QtWidgets.QLabel("v1.5.9")
+        kol_ver_lb = QtWidgets.QLabel("Phiên bản 1.0")
         kol_ver_lb.setObjectName("verLabel")
+        kol_ver_update_btn = QtWidgets.QPushButton("⬆️  Cập nhật")
+        kol_ver_update_btn.setObjectName("updateBtn")
+        kol_ver_update_btn.setFixedHeight(_s(36, sc))
+        kol_ver_update_btn.setFixedWidth(_s(130, sc))
         kol_new_btn = QtWidgets.QPushButton("● New")
         kol_new_btn.setObjectName("newBtn")
-        kol_new_btn.setFixedHeight(_s(36, sc))
+        kol_new_btn.setFixedHeight(_s(40, sc))
         topRow.addWidget(kol_lang_cb)
         topRow.addWidget(kol_ver_lb)
+        topRow.addWidget(kol_ver_update_btn)
         topRow.addStretch()
         topRow.addWidget(kol_new_btn)
         layout.addLayout(topRow)
         self.kol_cb_lang = kol_lang_cb
+        self.kol_btn_update = kol_ver_update_btn
         self.kol_btn_new = kol_new_btn
-
-        # ── Link input (giống Veo3)
-        kol_le_link = QtWidgets.QLineEdit()
-        kol_le_link.setPlaceholderText("https://www.youtube.com/shorts/bQic0POmBHA")
-        kol_le_link.setObjectName("bigInput")
-        kol_le_link.setFixedHeight(_s(38, sc))
-        layout.addWidget(kol_le_link)
-        self.kol_le_link = kol_le_link
 
         # ── Desc input (giống Veo3)
         kol_le_desc = QtWidgets.QLineEdit()
         kol_le_desc.setPlaceholderText("Mô tả thêm (tùy chọn)...")
         kol_le_desc.setObjectName("bigInput")
-        kol_le_desc.setFixedHeight(_s(38, sc))
+        kol_le_desc.setFixedHeight(_s(42, sc))
         layout.addWidget(kol_le_desc)
         self.kol_le_desc = kol_le_desc
 
         # ── Analyze button (giống Veo3)
         kol_btn_analyze = QtWidgets.QPushButton("🚀  BẮT ĐẦU TẠO VIDEO")
         kol_btn_analyze.setObjectName("kolAnalyzeBtn")
-        kol_btn_analyze.setFixedHeight(_s(48, sc))
+        kol_btn_analyze.setFixedHeight(_s(52, sc))
         layout.addWidget(kol_btn_analyze)
         self.kol_btn_analyze = kol_btn_analyze
 
         # ── Action buttons row (giống Veo3)
         actionRow = QtWidgets.QHBoxLayout()
-        actionRow.setSpacing(_s(3, sc))
+        actionRow.setSpacing(_s(8, sc))
         kol_actions = [
-            ("⏱ Đang xử lý...  0/10",    "actionBtnProcess", "kol_btn_running"),
+            ("⏱ Đang xử lý 0 luồng",         "actionBtnProcess", "kol_btn_running"),
             ("🎬 Ghép Video",              "actionBtnMerge",   "kol_btn_merge"),
             ("🔁 Chạy lại cảnh nhất định", "actionBtnRerun",   "kol_btn_rerun"),
             ("✏️ Thêm kịch bản",           "actionBtnAdd",     "kol_btn_add"),
@@ -455,7 +463,7 @@ class Ui_Widget(object):
         for text, obj, attr in kol_actions:
             b = QtWidgets.QPushButton(text)
             b.setObjectName(obj)
-            b.setFixedHeight(_s(36, sc))
+            b.setFixedHeight(_s(40, sc))
             b.setCursor(QtCore.Qt.PointingHandCursor)
             actionRow.addWidget(b)
             setattr(self, attr, b)
@@ -505,12 +513,12 @@ class Ui_Widget(object):
         kol_prompt = QtWidgets.QLineEdit()
         kol_prompt.setPlaceholderText("✍️  Nhập mô tả KOL (phong cách, giọng nói, ngoại hình...)...")
         kol_prompt.setObjectName("kolPromptInput")
-        kol_prompt.setFixedHeight(_s(36, sc))
+        kol_prompt.setFixedHeight(_s(40, sc))
         self.kol_le_prompt = kol_prompt
 
         kol_upload_btn = QtWidgets.QPushButton("📷  Gửi ảnh KOL")
         kol_upload_btn.setObjectName("kolUploadBtn")
-        kol_upload_btn.setFixedHeight(_s(36, sc))
+        kol_upload_btn.setFixedHeight(_s(40, sc))
         kol_upload_btn.setFixedWidth(_s(120, sc))
         kol_upload_btn.setCursor(QtCore.Qt.PointingHandCursor)
         self.kol_btn_upload = kol_upload_btn
@@ -565,8 +573,8 @@ class Ui_Widget(object):
         frame = QtWidgets.QFrame()
         frame.setObjectName("kolMiniCard")
         frame.setCursor(QtCore.Qt.PointingHandCursor)
-        frame.setFixedWidth(_s(96, sc))
-        frame.setFixedHeight(_s(76, sc))
+        frame.setFixedWidth(_s(110, sc))
+        frame.setFixedHeight(_s(88, sc))
         frame.setStyleSheet(
             f"#kolMiniCard {{ background: #0f172a; border: 1px solid {accent}55;"
             f" border-radius: {_s(8,sc)}px; }}"
@@ -579,7 +587,7 @@ class Ui_Widget(object):
         emo_lb = QtWidgets.QLabel(emoji)
         emo_lb.setAlignment(QtCore.Qt.AlignCenter)
         emo_lb.setStyleSheet(
-            f"font-size: {_s(22,sc)}px; background: transparent; border: none;"
+            f"font-size: {_s(24,sc)}px; background: transparent; border: none;"
             f" border-radius: {_s(16,sc)}px;"
         )
 
@@ -587,7 +595,7 @@ class Ui_Widget(object):
         name_lb.setAlignment(QtCore.Qt.AlignCenter)
         name_lb.setWordWrap(True)
         name_lb.setStyleSheet(
-            f"color: #e2e8f0; font-size: {_s(9,sc)}px; font-weight: bold;"
+            f"color: #e2e8f0; font-size: {_s(11,sc)}px; font-weight: bold;"
             f" background: transparent; border: none;"
         )
 
@@ -611,13 +619,13 @@ class Ui_Widget(object):
     def _combo(self, items):
         cb = QtWidgets.QComboBox()
         cb.addItems(items)
-        cb.setFixedHeight(_s(28, self._sc))
+        cb.setFixedHeight(_s(32, self._sc))
         return cb
 
     def _le(self, placeholder="", password=False):
         le = QtWidgets.QLineEdit()
         le.setPlaceholderText(placeholder)
-        le.setFixedHeight(_s(28, self._sc))
+        le.setFixedHeight(_s(32, self._sc))
         if password:
             le.setEchoMode(QtWidgets.QLineEdit.Password)
         return le
@@ -660,13 +668,13 @@ class Ui_Widget(object):
     # ─── QSS ───
     def _apply_qss(self):
         sc = self._sc
-        fs    = _s(13, sc)
-        fs_sm = _s(12, sc)
-        fs_lg = _s(16, sc)
-        fs_tab= _s(14, sc)
+        fs    = _s(15, sc)
+        fs_sm = _s(13, sc)
+        fs_lg = _s(18, sc)
+        fs_tab= _s(17, sc)
         r     = _s(6, sc)
-        tp    = _s(8, sc)
-        th    = _s(8, sc)
+        tp    = _s(10, sc)
+        th    = _s(10, sc)
 
         qss = f"""
         QWidget {{
@@ -687,6 +695,7 @@ class Ui_Widget(object):
         QTabBar::tab {{
             background: #050e1a;
             color: #6b7280;
+            min-width: {_s(250, sc)}px;
             padding: {th}px {tp}px;
             font-size: {fs_tab}px;
             font-weight: bold;
@@ -708,7 +717,8 @@ class Ui_Widget(object):
             margin-top: {_s(4,sc)}px;
         }}
         #grpLabel {{ color: #94a3b8; font-size: {fs_sm}px; font-weight: bold; }}
-        #noteLabel {{ color: #64748b; font-size: {_s(10,sc)}px; font-style: italic; }}
+        #proxyHintLabel {{ color: #fbbf24; font-size: {fs_sm}px; font-weight: bold; font-style: italic; }}
+        #noteLabel {{ color: #64748b; font-size: {_s(11,sc)}px; font-style: italic; }}
         #warnLabel {{ color: #f59e0b; font-size: {_s(10,sc)}px; font-weight: bold; }}
         #smallBlue {{ color: #60a5fa; font-size: {fs_sm}px; }}
         #verLabel  {{ color: #94a3b8; font-size: {fs_sm}px; }}
@@ -722,7 +732,7 @@ class Ui_Widget(object):
             color: #e5e7eb;
             border: 1px solid #1e3a5f;
             border-radius: {r}px;
-            padding: {_s(4,sc)}px {_s(8,sc)}px;
+            padding: {_s(6,sc)}px {_s(10,sc)}px;
             font-size: {fs}px;
         }}
         QLineEdit:focus, QTextEdit:focus, QSpinBox:focus {{ border: 1px solid #38bdf8; }}
@@ -804,11 +814,17 @@ class Ui_Widget(object):
             border: none; color: white; font-size: {fs_sm}px;
         }}
 
+        #updateBtn {{
+            background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #0891b2, stop:1 #06b6d4);
+            border: none; color: white; font-size: {fs_sm}px; font-weight: bold;
+        }}
+        #updateBtn:hover {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #0c5f73, stop:1 #0891b2); }}
+
         /* ── ACTION BUTTONS ── */
         #actionBtnProcess {{
             background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #1d4ed8, stop:1 #3b82f6);
             border: 1px solid #2563eb;
-            color: white; font-size: {_s(11,sc)}px;
+            color: white; font-size: {_s(12,sc)}px;
             padding: {_s(3,sc)}px {_s(10,sc)}px;
             border-radius: {_s(6,sc)}px;
             font-weight: bold;
@@ -818,7 +834,7 @@ class Ui_Widget(object):
         #actionBtnMerge {{
             background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #7c3aed, stop:1 #a855f7);
             border: 1px solid #8b5cf6;
-            color: white; font-size: {_s(11,sc)}px;
+            color: white; font-size: {_s(12,sc)}px;
             padding: {_s(3,sc)}px {_s(10,sc)}px;
             border-radius: {_s(6,sc)}px;
             font-weight: bold;
@@ -828,7 +844,7 @@ class Ui_Widget(object):
         #actionBtnRerun {{
             background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #0e7490, stop:1 #06b6d4);
             border: 1px solid #0891b2;
-            color: white; font-size: {_s(11,sc)}px;
+            color: white; font-size: {_s(12,sc)}px;
             padding: {_s(3,sc)}px {_s(10,sc)}px;
             border-radius: {_s(6,sc)}px;
             font-weight: bold;
@@ -838,7 +854,7 @@ class Ui_Widget(object):
         #actionBtnAdd {{
             background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #166534, stop:1 #22c55e);
             border: 1px solid #16a34a;
-            color: white; font-size: {_s(11,sc)}px;
+            color: white; font-size: {_s(12,sc)}px;
             padding: {_s(3,sc)}px {_s(10,sc)}px;
             border-radius: {_s(6,sc)}px;
             font-weight: bold;
@@ -848,7 +864,7 @@ class Ui_Widget(object):
         #actionBtnMore {{
             background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #78350f, stop:1 #f59e0b);
             border: 1px solid #d97706;
-            color: white; font-size: {_s(11,sc)}px;
+            color: white; font-size: {_s(12,sc)}px;
             padding: {_s(3,sc)}px {_s(10,sc)}px;
             border-radius: {_s(6,sc)}px;
             font-weight: bold;
@@ -966,7 +982,7 @@ class Ui_Widget(object):
         self.centralwidget.parent().setStyleSheet(qss)
 
     def retranslateUi(self, Widget):
-        Widget.setWindowTitle("🎬 AI Video Tool - Grok / Veo3 / Seedance 2.0")
+        Widget.setWindowTitle("🎬 AI Video Tool - Veo3 / KOL AI")
 
 # test 1
 # if __name__ == "__main__":
