@@ -622,7 +622,273 @@ class ConcatVideoThread(QThread):
             self.finished.emit(False, f"Lỗi ghép video: {e}")
 
 
+
+class RefImageThread(QThread):
+    # Signal: (success, image_path_or_error_msg)
+    finished = pyqtSignal(bool, str)
+
+    def __init__(self, api_url_gpm, profile_id, prompt_text, win_size, win_pos, save_dir):
+        super().__init__()
+        self.api_url_gpm = api_url_gpm
+        self.profile_id = profile_id
+        self.prompt_text = prompt_text
+        self.win_size = win_size
+        self.win_pos = win_pos
+        self.save_dir = save_dir
+        self.is_running = True
+        self._stop_event = threading.Event()
+
+    def run(self):
+        gpm = Gpm()
+        profile_id = self.profile_id
+        status_msg = ""
+        success = False
+        image_path = ""
+        
+        try:
+            if not self.is_running:
+                return
+            if not profile_id:
+                raise RuntimeError("Chưa có ID Profile.")
+
+            remote_addr = gpm.open_profile(apiurl_Gpm=self.api_url_gpm, id_profile=profile_id, win_pos=self.win_pos, win_size=self.win_size)
+            if not remote_addr:
+                raise RuntimeError("Không thể mở Profile GPM.")
+
+            if not self.is_running: return
+
+            with sync_playwright() as p:
+                browser = None
+                for _ in range(5):
+                    try:
+                        browser = p.chromium.connect_over_cdp(f"http://{remote_addr}")
+                        break
+                    except:
+                        time.sleep(2)
+                if not browser:
+                    raise RuntimeError("Không thể kết nối Playwright.")
+                
+                context = browser.contexts[0]
+                page = context.pages[0] if context.pages else context.new_page()
+                
+                try:
+                    numbers = re.findall(r'\d+', str(self.win_size))
+                    if len(numbers) >= 2:
+                        w, h = int(numbers[0]), int(numbers[1])
+                        page.set_viewport_size({"width": w, "height": max(500, h - 85)})
+                except:
+                    pass
+
+                try:
+                    page.goto("https://labs.google/fx/vi/tools/flow", timeout=60000, wait_until="domcontentloaded")
+                except PlaywrightTimeoutError:
+                    pass
+
+                self._check_stop()
+
+                # Bấm Dự án mới
+                try:
+                    new_project_btn = page.locator('[data-type="button-overlay"]').first
+                    new_project_btn.wait_for(state="visible", timeout=15000)
+                    new_project_btn.click()
+                    
+                    one_google_detected = False
+                    for _ in range(6):
+                        for px in context.pages:
+                            try:
+                                if "one.google.com" in px.url:
+                                    one_google_detected = True
+                                    break
+                            except:
+                                pass
+                        if one_google_detected: break
+                        page.wait_for_timeout(500)
+                    
+                    if one_google_detected:
+                        page.wait_for_timeout(2000)
+                        page.bring_to_front()
+                        page.wait_for_timeout(1000)
+                        new_project_btn = page.locator('[data-type="button-overlay"]').first
+                        new_project_btn.wait_for(state="visible", timeout=10000)
+                        new_project_btn.click()
+                        page.wait_for_timeout(1000)
+                except Exception as e:
+                    print("Lỗi bấm Dự án mới:", e)
+
+                # Popup "Bắt đầu" và Cookie
+                try:
+                    page.locator('button:has-text("Bắt đầu")').last.click(timeout=3000)
+                except: pass
+                try:
+                    page.locator('button[aria-label="Close"], button[aria-label="Đóng"], [role="dialog"] button:has(svg)').first.click(timeout=3000)
+                except: pass
+
+                self._check_stop()
+
+                # Cấu hình "Hình ảnh", "16:9", "1x", "Nano Banana Pro"
+                try:
+                    setting_btn = page.locator('button', has_text=re.compile(r'1x|x2|x3|x4|Video|Hình ảnh|Veo|Imagen|Nano', re.IGNORECASE)).last
+                    setting_btn.click(timeout=10000)
+                    
+                    def click_setting(val):
+                        try:
+                            pattern = re.compile(rf'^\s*{re.escape(str(val).strip())}\s*$', re.IGNORECASE)
+                            locator = page.get_by_text(pattern).last
+                            if locator.is_visible(timeout=2000):
+                                locator.click(timeout=2000)
+                            else:
+                                page.locator(f'button:has-text("{val}"), [role="button"]:has-text("{val}"), span:has-text("{val}")').last.click(timeout=2000)
+                        except: pass
+
+                    click_setting("Hình ảnh")
+                    click_setting("16:9")
+                    click_setting("1x")
+                    
+                    try:
+                        pattern = re.compile(rf'^\s*Nano Banana Pro\s*$', re.IGNORECASE)
+                        locator = page.get_by_text(pattern).last
+                        if locator.is_visible(timeout=2000):
+                            locator.click(timeout=2000)
+                        else:
+                            model_btn = page.locator('button:has-text("Veo"), button:has-text("Imagen"), button:has-text("Nano")').last
+                            model_btn.click(timeout=2000)
+                            page.get_by_text(pattern).last.click(timeout=2000)
+                    except: pass
+                except: pass
+                finally:
+                    page.keyboard.press("Escape")
+                
+                self._check_stop()
+
+                # Gõ prompt
+                try:
+                    search_input = page.get_by_placeholder(re.compile(r"tạo gì|create", re.IGNORECASE)).first
+                    search_input.wait_for(state="visible", timeout=5000)
+                except:
+                    search_input = page.locator('textarea:visible, div[contenteditable="true"]:visible').last
+                
+                search_input.wait_for(state="visible", timeout=15000)
+                search_input.click(force=True)
+                search_input.fill(self.prompt_text)
+                search_input.press("Control+Enter")
+
+                # Chờ sinh ảnh
+                print("[Ảnh Tham Chiếu] Đang đợi sinh ảnh...")
+                timeout = 180
+                elapsed = 0
+                has_started = False
+                disappear_count = 0
+                
+                while elapsed < timeout:
+                    self._check_stop()
+                    if elapsed == 4 and not has_started:
+                        try: page.locator('button').last.click(timeout=1500)
+                        except: pass
+
+                    error_loc = page.locator('text="Không thành công", text="đã xảy ra lỗi", text="Rất tiếc"').first
+                    if error_loc.is_visible():
+                        raise RuntimeError("Hệ thống báo lỗi khi sinh ảnh.")
+
+                    is_generating = page.locator('text=/^\d{1,3}%$/').first.is_visible() or page.get_by_role("progressbar").first.is_visible() or page.locator('text="Đang trong hàng đợi", text="In queue"').first.is_visible()
+                    
+                    if is_generating:
+                        has_started = True
+                        disappear_count = 0
+                    else:
+                        if has_started:
+                            disappear_count += 2
+                            if disappear_count >= 10:
+                                break
+                        else:
+                            if elapsed > 60:
+                                raise RuntimeError("Timeout: Không thấy tiến trình tạo ảnh sau 60s.")
+                    
+                    if self._stop_event.wait(2): raise InterruptedError("Đã dừng")
+                    elapsed += 2
+
+                # Lấy kết quả
+                print("[Ảnh Tham Chiếu] Bắt đầu tải ảnh...")
+                page.wait_for_timeout(3000)
+                
+                if not os.path.exists(self.save_dir):
+                    os.makedirs(self.save_dir)
+                
+                safe_prompt = re.sub(r'[\\/*?:"<>|]', "", self.prompt_text)[:30].strip() or "ref"
+                filename = f"ref_image_{safe_prompt}_{int(time.time())}.png"
+                image_path = os.path.join(self.save_dir, filename)
+
+                base64_data = page.evaluate('''
+                    async () => {
+                        let imgs = document.querySelectorAll('img');
+                        let url = null;
+                        let largestSize = 0;
+                        for (let i of imgs) {
+                            if (i.src && i.src.startsWith('blob:')) {
+                                let rect = i.getBoundingClientRect();
+                                let size = rect.width * rect.height;
+                                if (size > largestSize) {
+                                    largestSize = size;
+                                    url = i.src;
+                                }
+                            }
+                        }
+                        if (!url) {
+                            let resNode = document.querySelector('[data-type="image-result"]');
+                            if (resNode) {
+                                let i = resNode.querySelector('img');
+                                if (i && i.src) url = i.src;
+                            }
+                        }
+                        if (!url) throw new Error("Không tìm thấy ảnh kết quả");
+                        let response = await fetch(url);
+                        let blob = await response.blob();
+                        return new Promise((resolve, reject) => {
+                            let reader = new FileReader();
+                            reader.onloadend = () => resolve(reader.result);
+                            reader.onerror = reject;
+                            reader.readAsDataURL(blob);
+                        });
+                    }
+                ''')
+
+                if base64_data and "," in base64_data:
+                    import base64
+                    header, encoded = base64_data.split(",", 1)
+                    with open(image_path, "wb") as f:
+                        f.write(base64.b64decode(encoded))
+                    success = True
+                    status_msg = image_path
+                else:
+                    raise Exception("Lỗi khi tải ảnh.")
+                
+                browser.close()
+                
+        except Exception as e:
+            success = False
+            status_msg = str(e)
+            print("[Ảnh Tham Chiếu] Lỗi:", e)
+        finally:
+            self.finished.emit(success, status_msg)
+            try:
+                gpm.close_profile(apiurl_Gpm=self.api_url_gpm, id_profile=profile_id)
+            except: pass
+
+    def stop(self):
+        self.is_running = False
+        self._stop_event.set()
+        try:
+            gpm = Gpm()
+            gpm.close_profile(apiurl_Gpm=self.api_url_gpm, id_profile=self.profile_id)
+        except: pass
+
+    def _check_stop(self):
+        if not self.is_running:
+            raise InterruptedError("Đã dừng")
+
+
 class Manager(QtWidgets.QMainWindow, Ui_Widget):
+    ref_image_signal = pyqtSignal(bool, str)
+
     def __init__(self):
         super().__init__()
         self.setupUi(self)
@@ -683,6 +949,7 @@ class Manager(QtWidgets.QMainWindow, Ui_Widget):
         self.loading_timer.timeout.connect(self._animate_loading_button)
         self.dot_count = 0
         self.is_prompt_running = False
+        self.is_concat_running = False
         self.prompt_scene_count = 0
 
         # Kết nối sự kiện Click cho nút "BẮT ĐẦU TẠO VIDEO" bên tab Veo3
@@ -701,6 +968,11 @@ class Manager(QtWidgets.QMainWindow, Ui_Widget):
         self.veo3_btn_concat.clicked.connect(self.concatAllScenes)
         self.kol_btn_concat.clicked.connect(self.concatAllScenes)
 
+        # Kết nối nút tạo ảnh tham chiếu nhân vật
+        if hasattr(self, 'veo3_btn_create_ref'):
+            self.veo3_btn_create_ref.clicked.connect(self.createReferenceImage)
+            self.ref_image_signal.connect(self._on_ref_image_result)
+
     def _animate_loading_button(self):
         self.dot_count = (self.dot_count + 1) % 4
         dots = "." * self.dot_count
@@ -713,6 +985,11 @@ class Manager(QtWidgets.QMainWindow, Ui_Widget):
             text = f"⏱ Đang xử lý {self.running_threads} cảnh{dots}"
             self.veo3_btn_running.setText(text)
             self.kol_btn_running.setText(text)
+
+        if getattr(self, "is_concat_running", False):
+            text = f"⏳ Đang ghép video vui lòng chờ{dots}"
+            self.veo3_btn_concat.setText(text)
+            self.kol_btn_concat.setText(text)
 
     def _start_btn_running_animation(self):
         if not self.loading_timer.isActive():
@@ -727,12 +1004,33 @@ class Manager(QtWidgets.QMainWindow, Ui_Widget):
             self.kol_btn_running.setStyleSheet(style)
 
     def _stop_btn_running_animation(self):
-        if not self.is_prompt_running and self.running_threads == 0:
+        if not self.is_prompt_running and self.running_threads == 0 and not getattr(self, "is_concat_running", False):
             self.loading_timer.stop()
             self.veo3_btn_running.setStyleSheet("")
             self.kol_btn_running.setStyleSheet("")
             self.veo3_btn_running.setText("⏱ Đang xử lý 0 cảnh")
             self.kol_btn_running.setText("⏱ Đang xử lý 0 cảnh")
+
+    def _start_concat_animation(self):
+        self.is_concat_running = True
+        if not self.loading_timer.isActive():
+            self.dot_count = 0
+            self.loading_timer.start(500)
+        # Đổi màu nút sang cam giống nút chạy
+        style = (
+            "background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #d97706, stop:1 #b45309);"
+            "border: 1px solid #d97706;"
+            "color: white; font-weight: bold; border-radius: 6px;"
+        )
+        self.veo3_btn_concat.setStyleSheet(style)
+        self.kol_btn_concat.setStyleSheet(style)
+
+    def _stop_concat_animation(self):
+        self.is_concat_running = False
+        if not self.is_prompt_running and self.running_threads == 0:
+            self.loading_timer.stop()
+        self.veo3_btn_concat.setStyleSheet("")
+        self.kol_btn_concat.setStyleSheet("")
 
     def _set_veo3_btn_running(self, is_running):
         """Đổi trạng thái nút BẮT ĐẦU TẠO VIDEO theo trạng thái luồng."""
@@ -1265,12 +1563,12 @@ class Manager(QtWidgets.QMainWindow, Ui_Widget):
         for vf in video_files:
             print(f"  - {os.path.basename(vf)}")
 
-        output_path = os.path.join(save_dir, "video_ghep_tat_ca.mp4")
+        import datetime
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = os.path.join(save_dir, f"video_ghep_tat_ca_{timestamp}.mp4")
 
-        # Đổi text nút sang trạng thái đang ghép (cả 2 tab)
-        wait_text = "⏳ Đang ghép video vui lòng chờ..."
-        self.veo3_btn_concat.setText(wait_text)
-        self.kol_btn_concat.setText(wait_text)
+        # Bật animation và vô hiệu hóa nút
+        self._start_concat_animation()
         self.veo3_btn_concat.setEnabled(False)
         self.kol_btn_concat.setEnabled(False)
 
@@ -1279,9 +1577,171 @@ class Manager(QtWidgets.QMainWindow, Ui_Widget):
         self.concat_thread.finished.connect(self._on_concat_finished)
         self.concat_thread.start()
 
+    def createReferenceImage(self):
+        """Gửi request POST tới webhook để tạo ảnh tham chiếu."""
+        if hasattr(self, 'veo3_btn_create_ref'):
+            self.veo3_btn_create_ref.setText("⏳ Đang xử lý...")
+            self.veo3_btn_create_ref.setEnabled(False)
+
+        # Thu thập 8 thông tin từ giao diện (bắt buộc gọi từ main thread)
+        payload = {
+            "link_youtube": self.veo3_le_link.text().strip(),
+            "mo_ta_them": self.veo3_le_desc.text().strip(),
+            "mo_hinh_sinh_kich_ban": self.cb_ai_model.currentText(),
+            "phong_cach": self.cb_style.currentText(),
+            "ngon_ngu": self.cb_language.currentText(),
+            "ty_le_copy": self.cb_copy_ratio.currentText(),
+            "giong_nhan_vat": self.te_voice_desc.toPlainText().strip(),
+            "so_canh": self.cb_scene_count.currentText()
+        }
+
+        def worker(data):
+            try:
+                url = "https://n8n.aiplt.io.vn/webhook/webhook_get_data_tool"
+                response = requests.post(url, json=data, timeout=60)
+                if response.status_code == 200:
+                    try:
+                        res_json = response.json()
+                    except Exception as e:
+                        self.ref_image_signal.emit(False, f"Lỗi parse JSON: {str(e)}\n\nResponse:\n{response.text[:200]}")
+                        return
+                        
+                    prompt_text = ""
+                    if isinstance(res_json, list) and len(res_json) > 0 and isinstance(res_json[0], dict):
+                        prompt_text = res_json[0].get("Prompt ảnh tham chiếu", "")
+                    elif isinstance(res_json, dict):
+                        prompt_text = res_json.get("Prompt ảnh tham chiếu", "")
+                        
+                    if prompt_text:
+                        self.ref_image_signal.emit(True, prompt_text)
+                    else:
+                        self.ref_image_signal.emit(False, f"API không có trường 'Prompt ảnh tham chiếu'. Dữ liệu trả về: {str(res_json)[:300]}")
+                else:
+                    self.ref_image_signal.emit(False, f"Lỗi HTTP {response.status_code}: {response.text}")
+            except Exception as e:
+                self.ref_image_signal.emit(False, f"Lỗi kết nối API: {str(e)}")
+                
+        import threading
+        t = threading.Thread(target=worker, args=(payload,))
+        t.daemon = True
+        t.start()
+
+    def _on_ref_image_result(self, success, result_text):
+        def _reset_btn():
+            if hasattr(self, 'veo3_btn_create_ref'):
+                self.veo3_btn_create_ref.setText("🖼 Bấm để tạo hình tham chiếu nhân vật")
+                self.veo3_btn_create_ref.setEnabled(True)
+
+        if success:
+            if hasattr(self, 'veo3_btn_create_ref'):
+                self.veo3_btn_create_ref.setText("⏳ Đang tải ảnh nền Playwright...")
+                # Nút vẫn đang disable từ lúc bấm, sẽ khôi phục khi ảnh tải xong
+                
+            if hasattr(self, 'veo3_ref_txt'):
+                self.full_ref_prompt = result_text
+                
+                # Cắt ngắn văn bản nếu quá dài để không làm vỡ layout (độ dài an toàn ~ 180 ký tự)
+                display_text = result_text
+                if len(result_text) > 180:
+                    display_text = result_text[:180] + "... <a href='#view_full' style='color:#60a5fa;'>[Xem đầy đủ]</a>"
+                
+                self.veo3_ref_txt.setTextFormat(QtCore.Qt.RichText)
+                self.veo3_ref_txt.setText(display_text)
+                self.veo3_ref_txt.setStyleSheet("color: white; font-weight: normal; font-style: normal;")
+                
+                # Tránh kết nối bị nhân bản nhiều lần nếu bấm liên tục
+                try:
+                    self.veo3_ref_txt.linkActivated.disconnect()
+                except TypeError:
+                    pass
+                self.veo3_ref_txt.linkActivated.connect(self._show_full_ref_prompt)
+            
+            # --- CHẠY LUỒNG PLAYWRIGHT ĐỂ SINH VÀ TẢI ẢNH ---
+            api_url_gpm = self.le_api_url_gpm.text().strip()
+            win_size = self.cb_win_size.currentText()
+            save_dir = self.le_folder.text().strip()
+            
+            # Lấy ID profile đầu tiên
+            profile_text = self.te_proxy_input.toPlainText().strip()
+            profiles = [p.strip() for p in profile_text.splitlines() if p.strip()]
+            first_profile = profiles[0] if profiles else ""
+            
+            if not api_url_gpm:
+                _reset_btn()
+                QMessageBox.warning(self, "Cảnh báo", "Vui lòng nhập API URL GPM trước khi tạo ảnh tham chiếu.")
+                return
+            if not first_profile:
+                _reset_btn()
+                QMessageBox.warning(self, "Cảnh báo", "Vui lòng nhập ít nhất 1 ID Profile GPM để chạy tạo ảnh.")
+                return
+            if not save_dir:
+                _reset_btn()
+                QMessageBox.warning(self, "Cảnh báo", "Vui lòng chọn thư mục lưu video/ảnh trước.")
+                return
+
+            print(f"[Ảnh Tham Chiếu] Bắt đầu tiến trình tự động tải ảnh bằng Playwright...")
+            self.ref_image_thread = RefImageThread(
+                api_url_gpm=api_url_gpm,
+                profile_id=first_profile,
+                prompt_text=self.full_ref_prompt,
+                win_size=win_size,
+                win_pos="0,0",
+                save_dir=save_dir
+            )
+            self.ref_image_thread.finished.connect(self._on_ref_image_created)
+            self.ref_image_thread.start()
+            
+        else:
+            _reset_btn()
+            QMessageBox.critical(self, "Lỗi API", result_text)
+
+    def _on_ref_image_created(self, success, result_msg):
+        """Xử lý sau khi luồng RefImageThread kết thúc sinh ảnh và tải ảnh."""
+        if hasattr(self, 'veo3_btn_create_ref'):
+            self.veo3_btn_create_ref.setText("🖼 Bấm để tạo hình tham chiếu nhân vật")
+            self.veo3_btn_create_ref.setEnabled(True)
+            
+        if success:
+            image_path = result_msg
+            print(f"[Ảnh Tham Chiếu] Tải ảnh hoàn tất: {image_path}")
+            if hasattr(self, 'veo3_ref_img') and os.path.exists(image_path):
+                # Load ảnh lên bằng QPixmap
+                pixmap = QtGui.QPixmap(image_path)
+                # Thu phóng ảnh để vừa khít với chiều rộng của thẻ (200px), giữ tỷ lệ 16:9
+                scaled_pixmap = pixmap.scaledToWidth(
+                    200, 
+                    mode=QtCore.Qt.SmoothTransformation
+                )
+                self.veo3_ref_img.setPixmap(scaled_pixmap)
+                # Bỏ cái chữ "ẢNH THAM CHIẾU" và margin padding đi để ảnh full tràn đẹp
+                self.veo3_ref_img.setText("")
+                self.veo3_ref_img.setStyleSheet("border-radius: 8px;")
+        else:
+            print(f"[Ảnh Tham Chiếu] ❌ Lỗi tạo ảnh tham chiếu: {result_msg}")
+            QMessageBox.warning(self, "Lỗi tải ảnh", f"Không thể sinh hoặc tải ảnh tham chiếu.\n\nChi tiết: {result_msg}")
+
+    def _show_full_ref_prompt(self, link):
+        """Hiển thị hộp thoại chứa toàn bộ Prompt nếu người dùng bấm vào '[Xem đầy đủ]'."""
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Prompt ảnh tham chiếu đầy đủ")
+        dialog.resize(600, 400)
+        
+        layout = QtWidgets.QVBoxLayout(dialog)
+        text_edit = QtWidgets.QTextEdit(dialog)
+        text_edit.setPlainText(getattr(self, 'full_ref_prompt', ''))
+        text_edit.setReadOnly(True)
+        # Sử dụng font chữ dễ đọc hơn cho khung xem trước
+        font = text_edit.font()
+        font.setPointSize(11)
+        text_edit.setFont(font)
+        
+        layout.addWidget(text_edit)
+        dialog.exec_()
+
     def _on_concat_finished(self, success, result):
         """Callback khi thread ghép video hoàn tất."""
-        # Trả nút về trạng thái ban đầu (cả 2 tab)
+        # Tắt animation và trả text nút về ban đầu
+        self._stop_concat_animation()
         original_text = "🎞️ Ghép tất cả cảnh thành 1 video"
         self.veo3_btn_concat.setText(original_text)
         self.kol_btn_concat.setText(original_text)

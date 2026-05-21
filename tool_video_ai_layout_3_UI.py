@@ -352,7 +352,7 @@ class Ui_Widget(object):
         # Reference image box
         refBox = QtWidgets.QFrame()
         refBox.setObjectName("refBox")
-        refBox.setFixedHeight(_s(78, sc))
+        refBox.setFixedHeight(_s(95, sc))
         refLayout = QtWidgets.QHBoxLayout(refBox)
         refLayout.setContentsMargins(_s(10,sc), _s(6,sc), _s(10,sc), _s(6,sc))
         refLayout.setSpacing(_s(12,sc))
@@ -360,16 +360,21 @@ class Ui_Widget(object):
         ref_img_lb = QtWidgets.QLabel("ẢNH THAM CHIẾU")
         ref_img_lb.setObjectName("refImgBox")
         ref_img_lb.setAlignment(QtCore.Qt.AlignCenter)
-        ref_img_lb.setFixedWidth(_s(160, sc))
+        ref_img_lb.setFixedWidth(_s(200, sc))
+
+        btn_create_ref = QtWidgets.QPushButton("🖼 Bấm để tạo hình tham chiếu nhân vật")
+        btn_create_ref.setObjectName("btnCreateRef")
+        btn_create_ref.setCursor(QtCore.Qt.PointingHandCursor)
+        setattr(self, f"{prefix}_btn_create_ref", btn_create_ref)
 
         ref_txt = QtWidgets.QLabel(
-            "MEO ME (Adult female cat, white fur, red dress...)  "
-            "MEO BO (Adult male cat, orange tabby fur, strong posture...)"
+            "Nên tạo ảnh tham chiếu nhân vật trước khi bấm 'Bắt đầu phân tích tạo prompt' để các nhân vật trong tất cả cảnh được đồng nhất"
         )
-        ref_txt.setObjectName("orangeText")
+        ref_txt.setObjectName("refNoteText")
         ref_txt.setWordWrap(True)
 
         refLayout.addWidget(ref_img_lb)
+        refLayout.addWidget(btn_create_ref)
         refLayout.addWidget(ref_txt, 1)
         layout.addWidget(refBox)
         setattr(self, f"{prefix}_ref_img", ref_img_lb)
@@ -946,14 +951,26 @@ class Ui_Widget(object):
 
         /* ── CARDS ── */
         #refBox {{
-            background: rgba(15,23,42,180);
-            border: 1px solid #16a34a;
-            border-radius: {_s(10,sc)}px;
+            background: rgba(15,23,42,230);
+            border: 2px dashed #3b82f6;
+            border-radius: {_s(12,sc)}px;
         }}
         #refImgBox {{
-            background: #020617; color: #64748b;
-            border: 1px solid #334155; border-radius: {_s(6,sc)}px;
-            font-weight: bold; font-size: {fs_sm}px;
+            background: #1e40af; color: white;
+            border: 1px solid #2563eb; border-radius: {_s(8,sc)}px;
+            font-weight: bold; font-size: {fs + 1}px;
+        }}
+        #btnCreateRef {{
+            background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #ec4899, stop:1 #be185d);
+            border: 2px solid #fbcfe8;
+            color: white; font-size: {fs + 2}px;
+            padding: {_s(8,sc)}px {_s(20,sc)}px;
+            border-radius: {_s(10,sc)}px;
+            font-weight: bold;
+        }}
+        #btnCreateRef:hover {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #db2777, stop:1 #9d174d); }}
+        #refNoteText {{
+            color: #fbbf24; font-weight: bold; font-size: {fs + 1}px; font-style: italic;
         }}
         #sceneCard {{
             background: rgba(15,23,42,210);
